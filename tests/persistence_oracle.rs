@@ -20,6 +20,8 @@ const VALUE_LENGTH: Option<usize> = Some(8);
 const KEEP: usize = 10;
 /// Roll back only to versions written within this many updates (a store may prune older ones, abandoned branches included).
 const WINDOW: usize = 5;
+/// T2b (amendment A1): also compare each batch's proof bytes with the replay's.
+const CHECK_PROOFS: bool = true;
 
 mod backend {
     use super::*;
@@ -75,7 +77,7 @@ fn check(step: usize, what: &str, pp: &PersistentBatchAVLProver, branch: &[Versi
     }
 }
 
-fn run(seed: u64, rounds: usize) -> (usize, usize, usize) {
+fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store");
     let mut rng = StdRng::seed_from_u64(seed);
@@ -92,7 +94,7 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize) {
         model: BTreeMap::new(),
     }];
     assert_eq!(branch[0].digest, genesis.digest().unwrap(), "empty-tree digest differs");
-    let (mut batches, mut rollbacks, mut reopens) = (0, 0, 0);
+    let (mut batches, mut rollbacks, mut reopens, mut abandoned) = (0, 0, 0, 0);
     let mut written = 0usize;
     for step in 0..rounds {
         let r: f64 = rng.gen();
@@ -107,7 +109,25 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize) {
             branch.truncate(i + 1);
             rollbacks += 1;
             check(step, "rollback", pp.as_ref().unwrap(), &branch, &pool);
-        } else if r < 0.20 {
+        } else if r < 0.18 && !eligible.is_empty() {
+            // abandoned cycle (amendment A2): operations, then a rollback with no proof, as for a block that fails
+            let i = eligible[rng.gen_range(0..eligible.len())];
+            let model = &branch.last().unwrap().model;
+            for _ in 0..rng.gen_range(1..5) {
+                let k = pool[rng.gen_range(0..pool.len())].clone();
+                let o = if model.contains_key(&k) {
+                    Operation::Remove(k)
+                } else {
+                    Operation::Insert(KeyValue { key: k, value: Bytes::from(vec![7u8; 8]) })
+                };
+                let _ = pp.as_mut().unwrap().perform_one_operation(&o);
+            }
+            let d = branch[i].digest.clone();
+            pp.as_mut().unwrap().rollback(&d).unwrap_or_else(|e| panic!("step {step}: abandoned-cycle rollback failed: {e}"));
+            branch.truncate(i + 1);
+            abandoned += 1;
+            check(step, "abandoned cycle", pp.as_ref().unwrap(), &branch, &pool);
+        } else if r < 0.26 {
             // close and reopen from disk
             drop(pp.take());
             pp = Some(backend::open(&path));
@@ -138,25 +158,33 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize) {
                 pp.as_mut().unwrap().perform_one_operation(&o).unwrap_or_else(|e| panic!("step {step}: op failed: {e}"));
                 batch.push(o);
             }
-            pp.as_mut().unwrap().generate_proof_and_update_storage(vec![]).unwrap_or_else(|e| panic!("step {step}: update failed: {e}"));
+            let proof = pp.as_mut().unwrap().generate_proof_and_update_storage(vec![]).unwrap_or_else(|e| panic!("step {step}: update failed: {e}"));
             let mut next = replay(&branch);
             for o in &batch {
                 next.perform_one_operation(o).unwrap();
             }
-            next.generate_proof();
+            let want_proof = next.generate_proof();
+            if CHECK_PROOFS {
+                assert_eq!(
+                    base16::encode_lower(&proof),
+                    base16::encode_lower(&want_proof),
+                    "step {step} (batch after {} rollbacks, {} reopens): proof bytes differ from the replay ({} vs {} bytes)",
+                    rollbacks, reopens, proof.len(), want_proof.len()
+                );
+            }
             written += 1;
             branch.push(Version { digest: next.digest().unwrap(), batch, written, model });
             batches += 1;
             check(step, "batch", pp.as_ref().unwrap(), &branch, &pool);
         }
     }
-    (batches, rollbacks, reopens)
+    (batches, rollbacks, reopens, abandoned)
 }
 
 #[test]
 fn persistent_prover_matches_in_memory_replay() {
     for seed in [1u64, 2, 3, 4, 5] {
-        let (b, r, o) = run(seed, 300);
-        println!("seed {seed}: 300 steps, {b} batches, {r} rollbacks, {o} reopens: all agree");
+        let (b, r, o, a) = run(seed, 300);
+        println!("seed {seed}: 300 steps, {b} batches, {r} rollbacks, {a} abandoned cycles, {o} reopens: all agree");
     }
 }

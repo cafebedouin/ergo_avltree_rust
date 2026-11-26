@@ -21,7 +21,9 @@ const KEEP: usize = 10;
 /// Roll back only to versions written within this many updates (a store may prune older ones, abandoned branches included).
 const WINDOW: usize = 5;
 /// T2b (amendment A1): also compare each batch's proof bytes with the replay's.
-const CHECK_PROOFS: bool = true;
+fn check_proofs() -> bool {
+    std::env::var("CHECK_PROOFS").map(|v| v != "0").unwrap_or(true)
+}
 
 mod backend {
     use super::*;
@@ -164,12 +166,21 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
                 next.perform_one_operation(o).unwrap();
             }
             let want_proof = next.generate_proof();
-            if CHECK_PROOFS {
+            if check_proofs() && proof != want_proof {
+                // does the persistent prover's proof verify (from the previous digest, to the new one)?
+                let verifies = {
+                    let tree = AVLTree::new(|d: &[u8; 32]| Node::LabelOnly(NodeHeader::new(Some(*d), None)), KEY_LENGTH, VALUE_LENGTH);
+                    let prev = branch.last().unwrap().digest.clone();
+                    match ergo_avltree_rust::batch_avl_verifier::BatchAVLVerifier::new(&prev, &proof, tree, None, None) {
+                        Ok(mut v) => batch.iter().all(|o| v.perform_one_operation(o).is_ok()) && v.digest() == next.digest(),
+                        Err(_) => false,
+                    }
+                };
                 assert_eq!(
                     base16::encode_lower(&proof),
                     base16::encode_lower(&want_proof),
-                    "step {step} (batch after {} rollbacks, {} reopens): proof bytes differ from the replay ({} vs {} bytes)",
-                    rollbacks, reopens, proof.len(), want_proof.len()
+                    "step {step} (batch after {} rollbacks, {} reopens): proof bytes differ from the replay ({} vs {} bytes; the persistent proof verifies: {})",
+                    rollbacks, reopens, proof.len(), want_proof.len(), verifies
                 );
             }
             written += 1;

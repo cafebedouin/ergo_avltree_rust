@@ -1,7 +1,7 @@
 #![cfg(feature = "persistence")]
 //! Two stores open in one process must not share state: store A is written, store B is opened and written,
 //! then A must roll back to its own version and read its own keys, and keep working after B is dropped.
-//! The backend is chosen only in `backend::open` (one per PR).
+//! The backend is chosen only in `backend::open`.
 
 use bytes::Bytes;
 use ergo_avltree_rust::batch_avl_prover::BatchAVLProver;
@@ -12,7 +12,7 @@ use std::path::Path;
 
 const KEY_LENGTH: usize = 32;
 const VALUE_LENGTH: Option<usize> = Some(8);
-#[allow(dead_code)] // used by the #9 backend
+#[allow(dead_code)] // versions a backend keeps, where it takes a count
 const KEEP: usize = 10;
 
 mod backend {

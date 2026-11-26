@@ -2,7 +2,7 @@
 //! Differential oracle for a disk-backed `VersionedAVLStorage`: a seeded schedule of operation batches,
 //! rollbacks to stored versions and close-and-reopen cycles. After every step the persistent prover's digest
 //! and every key's `unauthenticated_lookup` are compared with an in-memory `BatchAVLProver` that replays the
-//! same branch of history from genesis. The backend is chosen only in `backend::open` (one per PR).
+//! same branch of history from genesis. The backend is chosen only in `backend::open`.
 
 use bytes::Bytes;
 use ergo_avltree_rust::authenticated_tree_ops::AuthenticatedTreeOps;
@@ -17,11 +17,11 @@ use std::path::Path;
 
 const KEY_LENGTH: usize = 32;
 const VALUE_LENGTH: Option<usize> = Some(8);
-#[allow(dead_code)] // used by the #9 backend
+#[allow(dead_code)] // versions a backend keeps, where it takes a count
 const KEEP: usize = 10;
 /// Roll back only to versions written within this many updates (a store may prune older ones, abandoned branches included).
 const WINDOW: usize = 5;
-/// T2b (amendment A1): also compare each batch's proof bytes with the replay's.
+/// Also compare each batch's proof bytes with the replay's (set CHECK_PROOFS=0 to skip).
 fn check_proofs() -> bool {
     std::env::var("CHECK_PROOFS")
         .map(|v| v != "0")
@@ -139,7 +139,7 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
             rollbacks += 1;
             check(step, "rollback", pp.as_ref().unwrap(), &branch, &pool);
         } else if r < 0.18 && !eligible.is_empty() {
-            // abandoned cycle (amendment A2): operations, then a rollback with no proof, as for a block that fails
+            // abandoned cycle: operations, then a rollback with no proof, as for a block that fails
             let i = eligible[rng.gen_range(0..eligible.len())];
             let model = &branch.last().unwrap().model;
             for _ in 0..rng.gen_range(1..5) {

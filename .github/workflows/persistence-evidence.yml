@@ -1,0 +1,27 @@
+name: persistence-evidence
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  rocksdb-0-25-ubuntu-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: bump rocksdb only (diagnostic, not the PR)
+        run: sed -i 's/^rocksdb = { version = "0.22"/rocksdb = { version = "0.25"/' Cargo.toml && grep '^rocksdb' Cargo.toml
+      - name: the PR's own persistence tests, parallel (default), five times
+        if: always()
+        run: for i in 1 2 3 4 5; do cargo test --features disk-persistence --test disk_persistence_test 2>&1 | grep -E "^test |test result"; done
+      - name: the PR's own persistence tests, one thread, five times
+        if: always()
+        run: for i in 1 2 3 4 5; do cargo test --features disk-persistence --test disk_persistence_test -- --test-threads=1 2>&1 | grep -E "^test |test result"; done
+      - name: isolation
+        if: always()
+        run: cargo test --features disk-persistence --test persistence_isolation -- --nocapture
+      - name: oracle with proof bytes
+        if: always()
+        run: cargo test --features disk-persistence --test persistence_oracle -- --nocapture
+      - name: oracle, digests and lookups only (CHECK_PROOFS=0)
+        if: always()
+        run: CHECK_PROOFS=0 cargo test --features disk-persistence --test persistence_oracle -- --nocapture

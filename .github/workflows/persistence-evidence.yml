@@ -3,13 +3,27 @@ on: pull_request
 permissions:
   contents: read
 jobs:
-  feature-tests:
+  as-written-ubuntu-22-04:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: gcc --version | head -1
+      - name: feature suite
+        run: cargo test --features disk-persistence --no-fail-fast --lib --tests -- --nocapture
+      - name: differential oracle and isolation
+        if: always()
+        run: cargo test --features disk-persistence --test persistence_oracle --test persistence_isolation -- --nocapture
+  rocksdb-0-25-ubuntu-latest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - run: gcc --version | head -1
+      - name: bump rocksdb only (diagnostic, not the PR)
+        run: sed -i 's/^rocksdb = { version = "0.22"/rocksdb = { version = "0.25"/' Cargo.toml && grep '^rocksdb' Cargo.toml
       - name: feature suite
         run: cargo test --features disk-persistence --no-fail-fast --lib --tests -- --nocapture
-      - name: differential oracle and isolation (separate step, always runs)
+      - name: differential oracle and isolation
         if: always()
         run: cargo test --features disk-persistence --test persistence_oracle --test persistence_isolation -- --nocapture

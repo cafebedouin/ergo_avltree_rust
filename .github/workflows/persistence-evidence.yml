@@ -3,27 +3,22 @@ on: pull_request
 permissions:
   contents: read
 jobs:
-  as-written-ubuntu-22-04:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - run: gcc --version | head -1
-      - name: feature suite
-        run: cargo test --features disk-persistence --no-fail-fast --lib --tests -- --nocapture
-      - name: differential oracle and isolation
-        if: always()
-        run: cargo test --features disk-persistence --test persistence_oracle --test persistence_isolation -- --nocapture
   rocksdb-0-25-ubuntu-latest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - run: gcc --version | head -1
       - name: bump rocksdb only (diagnostic, not the PR)
         run: sed -i 's/^rocksdb = { version = "0.22"/rocksdb = { version = "0.25"/' Cargo.toml && grep '^rocksdb' Cargo.toml
-      - name: feature suite
-        run: cargo test --features disk-persistence --no-fail-fast --lib --tests -- --nocapture
-      - name: differential oracle and isolation
+      - name: the PR's own persistence tests, parallel (default), three times
         if: always()
-        run: cargo test --features disk-persistence --test persistence_oracle --test persistence_isolation -- --nocapture
+        run: for i in 1 2 3; do cargo test --features disk-persistence --test disk_persistence_test 2>&1 | grep -E "^test |test result"; done
+      - name: the PR's own persistence tests, one thread, three times
+        if: always()
+        run: for i in 1 2 3; do cargo test --features disk-persistence --test disk_persistence_test -- --test-threads=1 2>&1 | grep -E "^test |test result"; done
+      - name: oracle with proof bytes (validity reported on a mismatch)
+        if: always()
+        run: cargo test --features disk-persistence --test persistence_oracle -- --nocapture
+      - name: oracle, digests and lookups only (CHECK_PROOFS=0)
+        if: always()
+        run: CHECK_PROOFS=0 cargo test --features disk-persistence --test persistence_oracle -- --nocapture

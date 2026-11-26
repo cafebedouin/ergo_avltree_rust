@@ -17,12 +17,15 @@ use std::path::Path;
 
 const KEY_LENGTH: usize = 32;
 const VALUE_LENGTH: Option<usize> = Some(8);
+#[allow(dead_code)] // used by the #9 backend
 const KEEP: usize = 10;
 /// Roll back only to versions written within this many updates (a store may prune older ones, abandoned branches included).
 const WINDOW: usize = 5;
 /// T2b (amendment A1): also compare each batch's proof bytes with the replay's.
 fn check_proofs() -> bool {
-    std::env::var("CHECK_PROOFS").map(|v| v != "0").unwrap_or(true)
+    std::env::var("CHECK_PROOFS")
+        .map(|v| v != "0")
+        .unwrap_or(true)
 }
 
 mod backend {
@@ -32,7 +35,8 @@ mod backend {
     pub fn open(path: &Path) -> PersistentBatchAVLProver {
         let storage = RedbAVLStorage::open(path, KEY_LENGTH, VALUE_LENGTH).unwrap();
         let tree = AVLTree::with_resolver(storage.create_resolver(), KEY_LENGTH, VALUE_LENGTH);
-        PersistentBatchAVLProver::new(BatchAVLProver::new(tree, true), Box::new(storage), vec![]).unwrap()
+        PersistentBatchAVLProver::new(BatchAVLProver::new(tree, true), Box::new(storage), vec![])
+            .unwrap()
     }
 }
 
@@ -66,9 +70,19 @@ fn replay(branch: &[Version]) -> BatchAVLProver {
     p
 }
 
-fn check(step: usize, what: &str, pp: &PersistentBatchAVLProver, branch: &[Version], probes: &[Bytes]) {
+fn check(
+    step: usize,
+    what: &str,
+    pp: &PersistentBatchAVLProver,
+    branch: &[Version],
+    probes: &[Bytes],
+) {
     let want = &branch.last().unwrap();
-    assert_eq!(pp.digest(), want.digest, "step {step} ({what}): digest differs from the replay");
+    assert_eq!(
+        pp.digest(),
+        want.digest,
+        "step {step} ({what}): digest differs from the replay"
+    );
     for k in probes {
         assert_eq!(
             pp.unauthenticated_lookup(k),
@@ -84,7 +98,13 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
     let path = dir.path().join("store");
     let mut rng = StdRng::seed_from_u64(seed);
     let pool: Vec<Bytes> = (0..120)
-        .map(|_| Bytes::from((0..KEY_LENGTH).map(|_| rng.gen_range(1..255u8)).collect::<Vec<u8>>()))
+        .map(|_| {
+            Bytes::from(
+                (0..KEY_LENGTH)
+                    .map(|_| rng.gen_range(1..255u8))
+                    .collect::<Vec<u8>>(),
+            )
+        })
         .collect();
     let mut pp = Some(backend::open(&path));
     let mut genesis = memory_prover();
@@ -95,7 +115,11 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
         written: 0,
         model: BTreeMap::new(),
     }];
-    assert_eq!(branch[0].digest, genesis.digest().unwrap(), "empty-tree digest differs");
+    assert_eq!(
+        branch[0].digest,
+        genesis.digest().unwrap(),
+        "empty-tree digest differs"
+    );
     let (mut batches, mut rollbacks, mut reopens, mut abandoned) = (0, 0, 0, 0);
     let mut written = 0usize;
     for step in 0..rounds {
@@ -107,7 +131,10 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
             // roll back to a recent version on the current branch (not the current one)
             let i = eligible[rng.gen_range(0..eligible.len())];
             let d = branch[i].digest.clone();
-            pp.as_mut().unwrap().rollback(&d).unwrap_or_else(|e| panic!("step {step}: rollback to version {i} failed: {e}"));
+            pp.as_mut()
+                .unwrap()
+                .rollback(&d)
+                .unwrap_or_else(|e| panic!("step {step}: rollback to version {i} failed: {e}"));
             branch.truncate(i + 1);
             rollbacks += 1;
             check(step, "rollback", pp.as_ref().unwrap(), &branch, &pool);
@@ -120,15 +147,27 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
                 let o = if model.contains_key(&k) {
                     Operation::Remove(k)
                 } else {
-                    Operation::Insert(KeyValue { key: k, value: Bytes::from(vec![7u8; 8]) })
+                    Operation::Insert(KeyValue {
+                        key: k,
+                        value: Bytes::from(vec![7u8; 8]),
+                    })
                 };
                 let _ = pp.as_mut().unwrap().perform_one_operation(&o);
             }
             let d = branch[i].digest.clone();
-            pp.as_mut().unwrap().rollback(&d).unwrap_or_else(|e| panic!("step {step}: abandoned-cycle rollback failed: {e}"));
+            pp.as_mut()
+                .unwrap()
+                .rollback(&d)
+                .unwrap_or_else(|e| panic!("step {step}: abandoned-cycle rollback failed: {e}"));
             branch.truncate(i + 1);
             abandoned += 1;
-            check(step, "abandoned cycle", pp.as_ref().unwrap(), &branch, &pool);
+            check(
+                step,
+                "abandoned cycle",
+                pp.as_ref().unwrap(),
+                &branch,
+                &pool,
+            );
         } else if r < 0.26 {
             // close and reopen from disk
             drop(pp.take());
@@ -143,10 +182,16 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
                 let v = Bytes::from(rng.gen::<u64>().to_be_bytes().to_vec());
                 let present = model.contains_key(&k);
                 let o = match (present, rng.gen_range(0..4)) {
-                    (false, _) => Operation::Insert(KeyValue { key: k.clone(), value: v.clone() }),
+                    (false, _) => Operation::Insert(KeyValue {
+                        key: k.clone(),
+                        value: v.clone(),
+                    }),
                     (true, 0) => Operation::Remove(k.clone()),
                     (true, 1) => Operation::Lookup(k.clone()),
-                    (true, _) => Operation::Update(KeyValue { key: k.clone(), value: v.clone() }),
+                    (true, _) => Operation::Update(KeyValue {
+                        key: k.clone(),
+                        value: v.clone(),
+                    }),
                 };
                 match &o {
                     Operation::Insert(kv) | Operation::Update(kv) => {
@@ -157,10 +202,17 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
                     }
                     _ => {}
                 }
-                pp.as_mut().unwrap().perform_one_operation(&o).unwrap_or_else(|e| panic!("step {step}: op failed: {e}"));
+                pp.as_mut()
+                    .unwrap()
+                    .perform_one_operation(&o)
+                    .unwrap_or_else(|e| panic!("step {step}: op failed: {e}"));
                 batch.push(o);
             }
-            let proof = pp.as_mut().unwrap().generate_proof_and_update_storage(vec![]).unwrap_or_else(|e| panic!("step {step}: update failed: {e}"));
+            let proof = pp
+                .as_mut()
+                .unwrap()
+                .generate_proof_and_update_storage(vec![])
+                .unwrap_or_else(|e| panic!("step {step}: update failed: {e}"));
             let mut next = replay(&branch);
             for o in &batch {
                 next.perform_one_operation(o).unwrap();
@@ -169,10 +221,19 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
             if check_proofs() && proof != want_proof {
                 // does the persistent prover's proof verify (from the previous digest, to the new one)?
                 let verifies = {
-                    let tree = AVLTree::new(|d: &[u8; 32]| Node::LabelOnly(NodeHeader::new(Some(*d), None)), KEY_LENGTH, VALUE_LENGTH);
+                    let tree = AVLTree::new(
+                        |d: &[u8; 32]| Node::LabelOnly(NodeHeader::new(Some(*d), None)),
+                        KEY_LENGTH,
+                        VALUE_LENGTH,
+                    );
                     let prev = branch.last().unwrap().digest.clone();
-                    match ergo_avltree_rust::batch_avl_verifier::BatchAVLVerifier::new(&prev, &proof, tree, None, None) {
-                        Ok(mut v) => batch.iter().all(|o| v.perform_one_operation(o).is_ok()) && v.digest() == next.digest(),
+                    match ergo_avltree_rust::batch_avl_verifier::BatchAVLVerifier::new(
+                        &prev, &proof, tree, None, None,
+                    ) {
+                        Ok(mut v) => {
+                            batch.iter().all(|o| v.perform_one_operation(o).is_ok())
+                                && v.digest() == next.digest()
+                        }
                         Err(_) => false,
                     }
                 };
@@ -184,7 +245,12 @@ fn run(seed: u64, rounds: usize) -> (usize, usize, usize, usize) {
                 );
             }
             written += 1;
-            branch.push(Version { digest: next.digest().unwrap(), batch, written, model });
+            branch.push(Version {
+                digest: next.digest().unwrap(),
+                batch,
+                written,
+                model,
+            });
             batches += 1;
             check(step, "batch", pp.as_ref().unwrap(), &branch, &pool);
         }
